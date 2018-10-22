@@ -2,6 +2,8 @@ import keras as _keras
 import numpy as _np
 import six
 
+import pdb
+
 _KERAS_LAYERS_1D = [
     _keras.layers.Conv1D,
     _keras.layers.UpSampling1D,
@@ -101,6 +103,7 @@ class NetGraph(object):
         self.layers_optional_inputs = {}
         self.layers_optional_outputs = {}
         
+        self.edge_name_dict = {}
         self.model = model
     
     def _add_layer(self, keras_layer):
@@ -183,7 +186,6 @@ class NetGraph(object):
         Extract the ordering of output layers. 
         """
         self.output_layers = []
-        # import pytest; pytest.set_trace()
         if hasattr(self.model, 'output_layers'):
             # find corresponding output layers in CoreML model
             # assume output layers are not shared
@@ -209,9 +211,12 @@ class NetGraph(object):
                     k_layer = self.keras_layer_map[l]
                     in_nodes = k_layer._inbound_nodes if hasattr(k_layer, '_inbound_nodes') else k_layer.inbound_nodes
                     for idx in range(len(in_nodes)):
-                        out_tensor = k_layer.get_output_at(idx)
-                        if out_tensor == model_output or (out_tensor.name in model_output.name):
-                            self.output_layers.append(l)
+                        out_tensors = k_layer.get_output_at(idx)
+                        if type(out_tensors) is not list:
+                            out_tensors = [out_tensors]
+                        for out_tensor in out_tensors:
+                            if out_tensor == model_output or (out_tensor.name in model_output.name):
+                                self.output_layers.append(l)
         if len(self.output_layers) == 0:
             raise ValueError("No outputs can be identified")
     
@@ -220,6 +225,26 @@ class NetGraph(object):
         
     def get_output_layers(self):
         return self.output_layers
+    
+    def _topological_sort(self):
+        # return topologically sort the layers
+        l = []
+        d = {}
+        for layer in self.layer_list:
+            preds = self.get_predecessors(layer)
+            if len(preds) == 0:
+                l.append(layer)
+                d[layer] = 1
+        idx = 0
+        while idx < len(l):
+            layer = l[idx]
+            succs = self.get_successors(layer)
+            for succ in succs:
+                if succ not in d:
+                    l.append(succ)
+                    d[succ] = 1
+            idx += 1
+        return l
     
     def generate_blob_names(self): 
         """
@@ -231,20 +256,37 @@ class NetGraph(object):
         # generate blob names that represent edges in blob_name_map
         # because of the InputLayers, input blobs are also generated. 
         
-        # Generate each layer's input / output blob names
+        # First, generate a topologically sorted layer list.
+        sorted_layers = self._topological_sort()
+        
+        # Second, assign edges in the topological order of its source
+        self.edge_name_dict = {}
+        for layer in sorted_layers:
+            succs = self.get_successors(layer)
+            kl = self.keras_layer_map[layer]
+            out_tensors = kl.output
+            for idx, succ in enumerate(succs):
+                if not (type(out_tensors) is list or type(out_tensors) is tuple):
+                    self.edge_name_dict[(layer, succ)] = layer + '_output'
+                else:
+                    pdb.set_trace()
+                    print('Blah')
+                    self.edge_name_dict[(layer, succ)] = layer + '_output_' + str(idx)
+
+        # Finally, generate each layer's input / output blob names
         for layer in self.layer_list: 
             keras_layer = self.keras_layer_map[layer]
             # no need to generate InputLayers' blobs
-            if not isinstance(keras_layer, InputLayer):
-                # layer's input blob names depend on predecessors
-                preds = self.get_predecessors(layer)
-                for pred in preds: 
-                    blob_name = pred + '_output'
-                    _insert_to_dict(self.layers_inputs, layer, blob_name)
-                # layer's output blob is just named after itself
-                blob_name = layer + '_output'
+            if isinstance(keras_layer, InputLayer):
+                continue
+            # layer's input blob names depend on predecessors
+            for pred in self.get_predecessors(layer):
+                blob_name = self.edge_name_dict[(pred, layer)]
+                _insert_to_dict(self.layers_inputs, layer, blob_name)
+            for succ in self.get_successors(layer):
+                blob_name = self.edge_name_dict[(layer, succ)]
                 _insert_to_dict(self.layers_outputs, layer, blob_name)
-    
+
     def get_layer_blobs(self, layer):
         keras_layer = self.keras_layer_map[layer]
         if isinstance(keras_layer, InputLayer):
@@ -266,7 +308,11 @@ class NetGraph(object):
             print('Input name length mismatch')
             return
         for i, in_layer in enumerate(self.input_layers):
-            old_blob_name = in_layer + '_output'
+            succs = self.get_successors(in_layer)
+            if len(succs) != 1:
+                raise ValueError('Input layer should only have exactly 1 successor')
+            old_blob_name = self.edge_name_dict[(in_layer, succs[0])]
+#            old_blob_name = in_layer + '_output'
             new_blob_name = new_names[i]
             succs = self.get_successors(in_layer)
             for succ in succs: 
@@ -655,7 +701,7 @@ class NetGraph(object):
             raise TypeError("Keras layer of type %s is not supported." % type(model))
             self = None
             return
-        
+
         # build the graph without considering embedded subgraphs
         for i, layer in enumerate(model.layers):
             in_nodes = layer._inbound_nodes if hasattr(layer,

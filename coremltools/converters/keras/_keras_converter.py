@@ -580,7 +580,8 @@ def convert(model,
                   model_precision = _MLMODEL_FULL_PRECISION,
                   predicted_probabilities_output = '',
                   add_custom_layers = False,
-                  custom_conversion_functions = None):
+                  custom_conversion_functions = None, 
+                  custom_objects=None):
     
     """
     Convert a Keras model to Core ML protobuf specification (.mlmodel).
@@ -690,6 +691,10 @@ def convert(model,
         as functions taking a Keras custom layer and returning a parameter dictionary
         and list of weights.
 
+    custom_objects: {str:Layer}
+        A dictionary with keys corresponding to names of custom layers and values
+        as Keras custom layers.
+
     Returns
     -------
     model: MLModel
@@ -757,7 +762,8 @@ def convert(model,
                       model_precision,
                       predicted_probabilities_output,
                       add_custom_layers,
-                      custom_conversion_functions=custom_conversion_functions)
+                      custom_conversion_functions=custom_conversion_functions,
+                      custom_objects=custom_objects)
 
     return _MLModel(spec)
 

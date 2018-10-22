@@ -343,6 +343,9 @@ def _convert(model,
         if isinstance(keras_layer, _keras.layers.wrappers.TimeDistributed):
             keras_layer = keras_layer.layer
         converter_func = _get_layer_converter_fn(keras_layer, add_custom_layers)
+        if layer == 'max_pooling_with_argmax2d_1':
+            import pdb
+            pdb.set_trace()
         input_names, output_names = graph.get_layer_blobs(layer)
         # this may be none if we're using custom layers
         if converter_func:
