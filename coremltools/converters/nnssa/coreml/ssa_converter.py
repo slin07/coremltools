@@ -200,6 +200,8 @@ class SSAConverter(object):
             'Pow': self._convert_pow,
             'SelectMask': self._convert_select,
             'Conv2D': self._convert_conv2d,
+            'MaxPool': self._convert_maxpool,
+            'AvgPool': self._convert_avgpool,
             'Reshape': self._convert_reshape,
             'Softmax': self._convert_softmax,
             'Prod': self._convert_prod,
@@ -1199,8 +1201,46 @@ class SSAConverter(object):
             input_name=conv_input_name,
             output_name=conv_output_name,
             dilation_factors=[1, 1])
+        
+        shapes.propagate_single_layer(layer, self.tensor_shapes, output_shapes=node.attr.get('_output_shapes'))
+
+    def _convert_pool(self, node, layer_type):
+        input_names = self._get_input_tensors(node)
+        data_format = node.attr.get('data_format', 'NHWC')
+        kernel_sizes = node.attr.get('ksize', [1, 1, 1, 1])
+        stride_sizes = node.attr.get('strides', [1, 1, 1, 1])
+        padding_type = node.attr.get('padding')
+
+        if data_format == 'NHWC':
+            kernel_height = kernel_sizes[1]
+            kernel_width = kernel_sizes[2]
+            stride_height = stride_sizes[1]
+            stride_width = stride_sizes[2]
+        else:
+            kernel_height = kernel_sizes[-2]
+            kernel_width = kernel_sizes[-1]
+            stride_height = stride_sizes[-2]
+            stride_width = stride_sizes[-1]
+
+        layer = self._get_builder().add_pooling(
+            name=node.name,
+            height=kernel_height,
+            width=kernel_width,
+            stride_height=stride_height,
+            stride_width=stride_width,
+            layer_type=layer_type,
+            padding_type=padding_type,
+            input_name=input_names[0],
+            output_name=node.name,
+            exclude_pad_area=True)
 
         shapes.propagate_single_layer(layer, self.tensor_shapes, output_shapes=node.attr.get('_output_shapes'))
+
+    def _convert_maxpool(self, node):
+        self._convert_pool(node, 'MAX')
+
+    def _convert_avgpool(self, node):
+        self._convert_pool(node, 'AVERAGE')
 
     def _convert_reshape(self, node):
         input_names = self._get_input_tensors(node)
